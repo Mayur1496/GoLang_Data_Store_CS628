@@ -8,6 +8,7 @@ import (
 	// You neet to add with
 	// go get github.com/sarkarbidya/CS628-assn1/userlib
 
+	"crypto/aes"
 	"crypto/rsa"
 
 	"github.com/sarkarbidya/CS628-assn1/userlib"
@@ -100,6 +101,7 @@ type User struct {
 // of data []byte is a multiple of the blocksize; if
 // this is not the case, StoreFile should return an error.
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
+	return
 }
 
 //
@@ -109,7 +111,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 // the block size; if it is not, AppendFile must return an error.
 // AppendFile : Function to append the file
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-
+	return
 }
 
 // LoadFile :This loads a block from a file in the Datastore.
@@ -121,10 +123,12 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // LoadFile is also expected to be efficient. Reading a random block from the
 // file should not fetch more than O(1) blocks from the Datastore.
 func (userdata *User) LoadFile(filename string, offset int) (data []byte, err error) {
+	return
 }
 
 // ShareFile : Function used to the share file with other user
 func (userdata *User) ShareFile(filename string, recipient string) (msgid string, err error) {
+	return
 }
 
 // ReceiveFile : Note recipient's filename can be different from the sender's filename.
@@ -133,10 +137,12 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // it is authentically from the sender.
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
+	return nil
 }
 
 // RevokeFile : function used revoke the shared file access
 func (userdata *User) RevokeFile(filename string) (err error) {
+	return
 }
 
 // This creates a sharing record, which is a key pointing to something
@@ -184,8 +190,8 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(user.Username, user.Key.PublicKey)
 
 	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
-	iv := make([]byte, configBlockSize)
-	iv = userlib.RandomBytes(configBlockSize)
+	iv := make([]byte, aes.BlockSize)
+	iv = userlib.RandomBytes(aes.BlockSize)
 	ivUUID := uuid.New()
 	userlib.DatastoreSet(ivUUID.String(), iv) //Store iv into Datastore
 	inode := []uuid.UUID{ivUUID}              //Save ivUUID to inode
@@ -250,7 +256,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 
 	inode := []uuid.UUID{}
-	if err := json.Unmarshal(encodedInode, inode); err != nil {
+	if err := json.Unmarshal(encodedInode, &inode); err != nil {
 		panic(err)
 	}
 
@@ -284,11 +290,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	encodedUser := []byte{}
+	encodedUser := make([]byte, len(data))
 	aesCypherStream := userlib.CFBDecrypter([]byte(password), iv)
 	aesCypherStream.XORKeyStream(encodedUser, data)
 
-	if err := json.Unmarshal(encodedUser, user); err != nil {
+	if err := json.Unmarshal(encodedUser, &user); err != nil {
 		panic(err)
 	}
 
