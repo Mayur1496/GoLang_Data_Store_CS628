@@ -195,6 +195,8 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	data, err := json.Marshal(user)
 	encryptedData := make([]byte, len(data))
 	aesCypherStream.XORKeyStream(encryptedData, data) //Encrypt user
+	mac := userlib.NewHMAC([]byte(password))          //Create HMAC
+	mac.Write(encryptedData)
 
 	if len(encryptedData) <= configBlockSize {
 		id := uuid.New()
@@ -222,6 +224,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 			remainingLength -= configBlockSize
 		}
 	}
+	//Append HMAC
+	macUUID := uuid.New()
+	hmacBlock := mac.Sum(nil)
+	inode = append(inode, macUUID)
+	userlib.DatastoreSet(macUUID.String(), hmacBlock)
+
 	encodedInode, _ := json.Marshal(inode)
 	userlib.DatastoreSet(string(storageKey), encodedInode)
 
@@ -233,4 +241,56 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // data was corrupted, or if the user can't be found.
 //GetUser : function used to get the user details
 func GetUser(username string, password string) (userdataptr *User, err error) {
+	var user User
+	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
+	encodedInode, ok := userlib.DatastoreGet(string(storageKey))
+	if !ok {
+		err := errors.New("Invalid Username or Password")
+		return nil, err
+	}
+
+	inode := []uuid.UUID{}
+	if err := json.Unmarshal(encodedInode, inode); err != nil {
+		panic(err)
+	}
+
+	data := []byte{} //For retrieval of encrypted data
+	iv := []byte{}
+	hmacBlock := []byte{}
+	for i, v := range inode {
+		if i == 0 { //Retrieve iv
+			iv, ok = userlib.DatastoreGet(v.String())
+			if !ok {
+				err := errors.New("Data Corrupted")
+				return nil, err
+			}
+		} else if i == len(inode)-1 { //Retrieve hmac
+			hmacBlock, ok = userlib.DatastoreGet(v.String())
+		} else {
+			block, ok := userlib.DatastoreGet(v.String())
+			if !ok {
+				err := errors.New("Data Corrupted")
+				return nil, err
+			}
+			data = append(data, block...)
+		}
+	}
+
+	mac := userlib.NewHMAC([]byte(password))
+	mac.Write(data)
+
+	if hex.EncodeToString(mac.Sum(nil)) != hex.EncodeToString(hmacBlock) {
+		err := errors.New("HMAC verification failed : Data Corrupted")
+		return nil, err
+	}
+
+	encodedUser := []byte{}
+	aesCypherStream := userlib.CFBDecrypter([]byte(password), iv)
+	aesCypherStream.XORKeyStream(encodedUser, data)
+
+	if err := json.Unmarshal(encodedUser, user); err != nil {
+		panic(err)
+	}
+
+	return &user, nil
 }
