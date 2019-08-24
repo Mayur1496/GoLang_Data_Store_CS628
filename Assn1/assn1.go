@@ -8,6 +8,8 @@ import (
 	// You neet to add with
 	// go get github.com/sarkarbidya/CS628-assn1/userlib
 
+	"crypto/rsa"
+
 	"github.com/sarkarbidya/CS628-assn1/userlib"
 
 	// Life is much easier with json:  You are
@@ -66,9 +68,9 @@ func someUsefulThings() {
 	userlib.DebugMsg("Key is %v", key)
 }
 
-var configBlockSize = 4096  //Do not modify this variable 
+var configBlockSize = 4096 //Do not modify this variable
 
-//setBlockSize - sets the global variable denoting blocksize to the passed parameter. This will be called only once in the beginning of the execution 
+//setBlockSize - sets the global variable denoting blocksize to the passed parameter. This will be called only once in the beginning of the execution
 func setBlockSize(blocksize int) {
 	configBlockSize = blocksize
 }
@@ -88,10 +90,13 @@ type User struct {
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
+	Password string
+	Key      *rsa.PrivateKey
+	FileKey  map[string]uuid.UUID
 }
 
 // StoreFile : function used to create a  file
-// It should store the file in blocks only if length 
+// It should store the file in blocks only if length
 // of data []byte is a multiple of the blocksize; if
 // this is not the case, StoreFile should return an error.
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
@@ -112,7 +117,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // It should give an error if the file block is corrupted in any way.
 // If there is no error, it must return exactly one block (of length blocksize)
 // of data.
-// 
+//
 // LoadFile is also expected to be efficient. Reading a random block from the
 // file should not fetch more than O(1) blocks from the Datastore.
 func (userdata *User) LoadFile(filename string, offset int) (data []byte, err error) {
@@ -122,7 +127,7 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 func (userdata *User) ShareFile(filename string, recipient string) (msgid string, err error) {
 }
 
-// ReceiveFile:Note recipient's filename can be different from the sender's filename.
+// ReceiveFile : Note recipient's filename can be different from the sender's filename.
 // The recipient should not be able to discover the sender's view on
 // what the filename even is!  However, the recipient must ensure that
 // it is authentically from the sender.
@@ -166,6 +171,61 @@ type sharingRecord struct {
 
 //InitUser : function used to create user
 func InitUser(username string, password string) (userdataptr *User, err error) {
+	var user User
+	//Storing values in User
+	user.Username = username
+	user.Password = password
+	user.Key, err = userlib.GenerateRSAKey()
+	if err != nil {
+		panic(err)
+	}
+
+	//Setting public key in Keystore
+	userlib.KeystoreSet(user.Username, user.Key.PublicKey)
+
+	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
+	iv := make([]byte, configBlockSize)
+	iv = userlib.RandomBytes(configBlockSize)
+	ivUUID := uuid.New()
+	userlib.DatastoreSet(ivUUID.String(), iv) //Store iv into Datastore
+	inode := []uuid.UUID{ivUUID}              //Save ivUUID to inode
+	aesCypherStream := userlib.CFBEncrypter([]byte(password), iv)
+
+	//Encrypting and storing user
+	data, err := json.Marshal(user)
+	encryptedData := make([]byte, len(data))
+	aesCypherStream.XORKeyStream(encryptedData, data) //Encrypt user
+
+	if len(encryptedData) <= configBlockSize {
+		id := uuid.New()
+		inode = append(inode, id)
+		userlib.DatastoreSet(id.String(), encryptedData)
+	} else {
+		start := 0
+		end := configBlockSize
+		remainingLength := len(encryptedData)
+		for {
+			if remainingLength == 0 {
+				break
+			}
+			if remainingLength < configBlockSize {
+				id := uuid.New()
+				inode = append(inode, id)
+				userlib.DatastoreSet(id.String(), encryptedData[start:])
+				break
+			}
+			id := uuid.New()
+			inode = append(inode, id)
+			userlib.DatastoreSet(id.String(), encryptedData[start:end])
+			start += configBlockSize
+			end += configBlockSize
+			remainingLength -= configBlockSize
+		}
+	}
+	encodedInode, _ := json.Marshal(inode)
+	userlib.DatastoreSet(string(storageKey), encodedInode)
+
+	return &user, nil
 }
 
 // GetUser : This fetches the user information from the Datastore.  It should
