@@ -94,6 +94,7 @@ type User struct {
 	Password string
 	Key      *rsa.PrivateKey
 	FileKey  map[string]uuid.UUID
+	//SharingRecords []sharingRecord
 }
 
 // StoreFile : function used to create a  file
@@ -104,8 +105,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	return
 }
 
-//
-// Append should be efficient, you shouldn't rewrite or reencrypt the
+// AppendFile :should be efficient, you shouldn't rewrite or reencrypt the
 // existing file, but only whatever additional information and
 // metadata you need. The length of data []byte must be a multiple of
 // the block size; if it is not, AppendFile must return an error.
@@ -158,6 +158,8 @@ func (userdata *User) RevokeFile(filename string) (err error) {
 // You may want to define what you actually want to pass as a
 // sharingRecord to serialized/deserialize in the data store.
 type sharingRecord struct {
+	FileID    uuid.UUID
+	UserNames []string
 }
 
 // This creates a user.  It will only be called once for a user
