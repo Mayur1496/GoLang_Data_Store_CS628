@@ -220,7 +220,10 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 	hmacBlock := []byte{}
 	firstInode := true
 
-	for i := offset; i < len(inodeIndirect); i++ {
+	indirectInodeOffset := (offset + 1) / (configBlockSize / 16) //size of UUID = 16 Bytes
+	inodeOffset := (offset + 1) % (configBlockSize / 16)
+
+	for i := indirectInodeOffset; i < len(inodeIndirect); i++ {
 		id := inodeIndirect[i].String()
 		inode := []uuid.UUID{}
 		encodedInode, _ := userlib.DatastoreGet(id)
@@ -228,13 +231,13 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 			panic(err)
 		}
 
-		for j, v2 := range inode {
-			dataBlockID := v2.String()
+		for j := inodeOffset; j < len(inode); j++ {
 			if firstInode { //Get iv from first id
-				iv, _ = userlib.DatastoreGet(dataBlockID)
+				iv, _ = userlib.DatastoreGet(inode[0].String())
 				firstInode = false
-				continue
 			}
+
+			dataBlockID := inode[j].String()
 
 			if i == len(inodeIndirect)-1 && j == len(inode)-1 { //get HMAC from last id
 				hmacBlock, _ = userlib.DatastoreGet(dataBlockID)

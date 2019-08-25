@@ -43,7 +43,7 @@ func TestGetUser(t *testing.T) {
 
 func TestFileStoreLoadAppend(t *testing.T) {
 	t.Log("----")
-	u1, _ := GetUser("amiya", "abcd")
+	u1, _ := InitUser("amiya", "abcd")
 
 	data1 := userlib.RandomBytes(4096)
 	e := u1.StoreFile("file1", data1)
