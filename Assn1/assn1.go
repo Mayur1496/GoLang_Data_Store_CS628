@@ -192,18 +192,19 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(user.Username, user.Key.PublicKey)
 
 	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
+	encryptionKey := userlib.Argon2Key([]byte(password), []byte(""), 32)
 	iv := make([]byte, aes.BlockSize)
 	iv = userlib.RandomBytes(aes.BlockSize)
 	ivUUID := uuid.New()
 	userlib.DatastoreSet(ivUUID.String(), iv) //Store iv into Datastore
 	inode := []uuid.UUID{ivUUID}              //Save ivUUID to inode
-	aesCypherStream := userlib.CFBEncrypter([]byte(password), iv)
+	aesCypherStream := userlib.CFBEncrypter(encryptionKey, iv)
 
 	//Encrypting and storing user
 	data, err := json.Marshal(user)
 	encryptedData := make([]byte, len(data))
 	aesCypherStream.XORKeyStream(encryptedData, data) //Encrypt user
-	mac := userlib.NewHMAC([]byte(password))          //Create HMAC
+	mac := userlib.NewHMAC(encryptionKey)             //Create HMAC
 	mac.Write(encryptedData)
 
 	if len(encryptedData) <= configBlockSize {
@@ -251,6 +252,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var user User
 	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
+	decryptionKey := userlib.Argon2Key([]byte(password), []byte(""), 32)
 	encodedInode, ok := userlib.DatastoreGet(string(storageKey))
 	if !ok {
 		err := errors.New("Invalid Username or Password")
@@ -284,7 +286,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		}
 	}
 
-	mac := userlib.NewHMAC([]byte(password))
+	mac := userlib.NewHMAC(decryptionKey)
 	mac.Write(data)
 
 	if hex.EncodeToString(mac.Sum(nil)) != hex.EncodeToString(hmacBlock) {
@@ -293,7 +295,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 
 	encodedUser := make([]byte, len(data))
-	aesCypherStream := userlib.CFBDecrypter([]byte(password), iv)
+	aesCypherStream := userlib.CFBDecrypter(decryptionKey, iv)
 	aesCypherStream.XORKeyStream(encodedUser, data)
 
 	if err := json.Unmarshal(encodedUser, &user); err != nil {

@@ -11,7 +11,7 @@ func TestInitUser(t *testing.T) {
 	t.Log("Initialization test")
 	userlib.DebugPrint = true
 	userlib.DebugPrint = false
-	_, err1 := InitUser("amiya", "aaaaaaaaaaaaaaaa")
+	_, err1 := InitUser("amiya", "abcd")
 	//t.Log(userlib.DatastoreGetMap())
 	if err1 != nil {
 		t.Log("Failed to initialize user")
@@ -27,7 +27,7 @@ func TestGetUser(t *testing.T) {
 	t.Log("Initialization test")
 	userlib.DebugPrint = true
 	userlib.DebugPrint = false
-	user, err1 := GetUser("amiya", "aaaaaaaaaaaaaaaa")
+	user, err1 := GetUser("amiya", "abcd")
 	if err1 != nil {
 		t.Log("Failed to initialize user")
 
