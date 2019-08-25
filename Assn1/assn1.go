@@ -111,57 +111,78 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	sharingkey := fileUUID.String()
 	userlib.DatastoreSet(sharingkey[:8], []byte(sharingdata))
 
-	if ((len(data) % configBlockSize) == 0){
-
-	}else{
-		iv := make([]byte, aes.BlockSize)
-		iv  = userlib.RandomBytes(aes.BlockSize)
-		ivUUID := uuid.New()
-	    inode := []uuid.UUID{ivUUID}
+	    if ((len(data) % configBlockSize) != 0){
+		    err := errors.New("Invalid Data Size")
+		    return err
+	    }
+		inodeIndirect := []uuid.UUID{}
+		
 		hmac := userlib.NewHMAC([]byte(sharingdata))
 		hashkey := hmac.Sum(nil)
-		//inode  = []uuid.UUID{ivUUID}              
+		iv := make([]byte, aes.BlockSize)
+		iv  = userlib.RandomBytes(aes.BlockSize)
+	             
 		aesCypherStream := userlib.CFBEncrypter([]byte(hashkey), iv)
 		encryptedData := make([]byte, len(data))
 		aesCypherStream.XORKeyStream(encryptedData, data)
 		mac := userlib.NewHMAC([]byte(hashkey))          //Create HMAC
 	    mac.Write(encryptedData)
 		
-		num_id := (len(data) / configBlockSize)
-		if ((num_id*32) < configBlockSize) {
-
-			if len(encryptedData) <= configBlockSize {
-				id := uuid.New()
-				inode = append(inode, id)
-				userlib.DatastoreSet(id.String(), encryptedData)
-			} else {
-				start := 0
+	
+		i := 0
+		for  {
+			    inode := []uuid.UUID{}
+			    inodeUUID := uuid.New()
+				inodeIndirect = append(inodeIndirect, inodeUUID)
+				if(i == 0){
+					
+		            ivUUID := uuid.New()
+		            inode = append(inode, ivUUID)
+					userlib.DatastoreSet(ivUUID.String(), iv)
+					i = i + 1
+				}
+			   
+			    start := 0
 				end := configBlockSize
 				remainingLength := len(encryptedData)
-				for {
+                j := 0
+				if i == 0 { j = 1
+				 } 
+				idinABLOCK := configBlockSize/32
+				for j < idinABLOCK   {
+					
 					if remainingLength == 0 {
 						break
 					}
-					if remainingLength < configBlockSize {
-						id := uuid.New()
-						inode = append(inode, id)
-						userlib.DatastoreSet(id.String(), encryptedData[start:])
-						break
-					}
+					
 					id := uuid.New()
-			        inode = append(inode, id)
+					inode = append(inode, id)
+					j = j + 1
 			        userlib.DatastoreSet(id.String(), encryptedData[start:end])
 			        start += configBlockSize
 			        end += configBlockSize
 			        remainingLength -= configBlockSize
+				
 				}
-			}
-			macUUID := uuid.New()
-	        hmacBlock := mac.Sum(nil)
-	        inode = append(inode, macUUID)
-	        userlib.DatastoreSet(macUUID.String(), hmacBlock)
+				if remainingLength == 0 {
+					macUUID := uuid.New()
+	                hmacBlock := mac.Sum(nil)
+	                inode = append(inode, macUUID)
+	            	userlib.DatastoreSet(macUUID.String(), hmacBlock)
+		            encodedInode, _ := json.Marshal(inode)
+		            userlib.DatastoreSet(inodeUUID.String(), encodedInode)
+					break
+				}
+			
+				encodedInode, _ := json.Marshal(inode)
+				userlib.DatastoreSet(inodeUUID.String(), encodedInode)	
+				
 		}
-	}
+		
+		
+	
+	encodedIndirectnode, _ := json.Marshal(inodeIndirect)
+	userlib.DatastoreSet(string(hashkey), encodedIndirectnode)
 
 	return
 }
