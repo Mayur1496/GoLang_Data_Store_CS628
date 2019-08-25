@@ -102,6 +102,67 @@ type User struct {
 // of data []byte is a multiple of the blocksize; if
 // this is not the case, StoreFile should return an error.
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
+	fileUUID := uuid.New()
+	userdata.FileKey[filename] = fileUUID
+	var record sharingRecord
+	record.FileID = fileUUID
+	record.UserNames = append(record.UserNames, userdata.Username)
+	sharingdata, err := json.Marshal(record)
+	sharingkey := fileUUID.String()
+	userlib.DatastoreSet(sharingkey[:8], []byte(sharingdata))
+
+	if ((len(data) % configBlockSize) == 0){
+
+	}else{
+		iv := make([]byte, aes.BlockSize)
+		iv  = userlib.RandomBytes(aes.BlockSize)
+		ivUUID := uuid.New()
+	    inode := []uuid.UUID{ivUUID}
+		hmac := userlib.NewHMAC([]byte(sharingdata))
+		hashkey := hmac.Sum(nil)
+		//inode  = []uuid.UUID{ivUUID}              
+		aesCypherStream := userlib.CFBEncrypter([]byte(hashkey), iv)
+		encryptedData := make([]byte, len(data))
+		aesCypherStream.XORKeyStream(encryptedData, data)
+		mac := userlib.NewHMAC([]byte(hashkey))          //Create HMAC
+	    mac.Write(encryptedData)
+		
+		num_id := (len(data) / configBlockSize)
+		if ((num_id*32) < configBlockSize) {
+
+			if len(encryptedData) <= configBlockSize {
+				id := uuid.New()
+				inode = append(inode, id)
+				userlib.DatastoreSet(id.String(), encryptedData)
+			} else {
+				start := 0
+				end := configBlockSize
+				remainingLength := len(encryptedData)
+				for {
+					if remainingLength == 0 {
+						break
+					}
+					if remainingLength < configBlockSize {
+						id := uuid.New()
+						inode = append(inode, id)
+						userlib.DatastoreSet(id.String(), encryptedData[start:])
+						break
+					}
+					id := uuid.New()
+			        inode = append(inode, id)
+			        userlib.DatastoreSet(id.String(), encryptedData[start:end])
+			        start += configBlockSize
+			        end += configBlockSize
+			        remainingLength -= configBlockSize
+				}
+			}
+			macUUID := uuid.New()
+	        hmacBlock := mac.Sum(nil)
+	        inode = append(inode, macUUID)
+	        userlib.DatastoreSet(macUUID.String(), hmacBlock)
+		}
+	}
+
 	return
 }
 
