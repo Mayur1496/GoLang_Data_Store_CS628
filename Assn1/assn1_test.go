@@ -45,7 +45,7 @@ func TestFileStoreLoadAppend(t *testing.T) {
 	t.Log("----")
 	u1, _ := InitUser("amiya", "abcd")
 
-	data1 := userlib.RandomBytes(4096)
+	data1 := make([]byte, 4096)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
@@ -57,6 +57,14 @@ func TestFileStoreLoadAppend(t *testing.T) {
 	} else {
 		t.Log("data is not corrupted")
 	}
+
+	e = u1.AppendFile("file1", data1)
+	if e != nil {
+		panic(e)
+	}
+
+	data3, _ := u1.LoadFile("file1", 0)
+	t.Log(len(data3))
 
 	// add test cases here
 }
