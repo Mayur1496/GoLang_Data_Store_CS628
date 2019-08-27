@@ -362,10 +362,38 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 	return decryptedData[offset*configBlockSize:], nil
 }
 
+
+
 // ShareFile : Function used to the share file with other user
 func (userdata *User) ShareFile(filename string, recipient string) (msgid string, err error) {
-	return
+	fileUUID := userdata.FileKey[filename]
+	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
+	sharingdata, _ := userlib.DatastoreGet(sharingkey[:8])
+	hmac := userlib.NewHMAC(sharingdata)
+	hashkey := hmac.Sum(nil)
+	var record sharingRecord
+	if err := json.Unmarshal(sharingdata, &record); err != nil {
+		panic(err)
+	}
+	record.UserNames = append(record.UserNames, recipient)
+	sharingdataNEW, err := json.Marshal(record)
+	hmacNEW := userlib.NewHMAC(sharingdataNEW)
+	hashkeyNEW := hmacNEW.Sum(nil)
+	encodedIndirectInode,_ := userlib.DatastoreGet(string(hashkey))
+	userlib.DatastoreSet(string(hashkeyNEW), encodedIndirectInode)
+	data := make([]byte, configBlockSize)
+	userlib.DatastoreSet(string(hashkey), data)
+	m := userdata.FileKey[filename]
+	mSIGN,_ := userlib.RSASign(userdata.Key, []byte(m.String()))
+    
+	
+	pubkey,_ := userlib.KeystoreGet(recipient)
+	mINBYTE := append([]byte(m.String()), mSIGN...)
+	byteMsg,_ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte(""))
+    msgid = string(byteMsg)
+	return 
 }
+
 
 // ReceiveFile : Note recipient's filename can be different from the sender's filename.
 // The recipient should not be able to discover the sender's view on
@@ -373,6 +401,14 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // it is authentically from the sender.
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
+
+	mINBYTE,_ := userlib.RSADecrypt(userdata.Key, []byte(msgid),[]byte("") )
+	sig := mINBYTE[36:]
+	pubkey,_ := userlib.KeystoreGet(sender)
+	userlib.RSAVerify(&pubkey,mINBYTE[:36],sig)
+	m,_:= uuid.ParseBytes(mINBYTE[:36])
+	userdata.FileKey[filename] = m
+
 	return nil
 }
 
