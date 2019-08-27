@@ -362,8 +362,6 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 	return decryptedData[offset*configBlockSize:], nil
 }
 
-
-
 // ShareFile : Function used to the share file with other user
 func (userdata *User) ShareFile(filename string, recipient string) (msgid string, err error) {
 	fileUUID := userdata.FileKey[filename]
@@ -377,23 +375,25 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 	}
 	record.UserNames = append(record.UserNames, recipient)
 	sharingdataNEW, err := json.Marshal(record)
+
+	//Saving sharingDataNew
+	userlib.DatastoreSet(sharingkey[:8], sharingdataNEW)
+
 	hmacNEW := userlib.NewHMAC(sharingdataNEW)
 	hashkeyNEW := hmacNEW.Sum(nil)
-	encodedIndirectInode,_ := userlib.DatastoreGet(string(hashkey))
+	encodedIndirectInode, _ := userlib.DatastoreGet(string(hashkey))
 	userlib.DatastoreSet(string(hashkeyNEW), encodedIndirectInode)
 	data := make([]byte, configBlockSize)
 	userlib.DatastoreSet(string(hashkey), data)
 	m := userdata.FileKey[filename]
-	mSIGN,_ := userlib.RSASign(userdata.Key, []byte(m.String()))
-    
-	
-	pubkey,_ := userlib.KeystoreGet(recipient)
-	mINBYTE := append([]byte(m.String()), mSIGN...)
-	byteMsg,_ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte(""))
-    msgid = string(byteMsg)
-	return 
-}
+	mSIGN, _ := userlib.RSASign(userdata.Key, []byte(m.String()))
 
+	pubkey, _ := userlib.KeystoreGet(recipient)
+	mINBYTE := append([]byte(m.String()), mSIGN...)
+	byteMsg, _ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte("share"))
+	msgid = string(byteMsg)
+	return
+}
 
 // ReceiveFile : Note recipient's filename can be different from the sender's filename.
 // The recipient should not be able to discover the sender's view on
@@ -402,11 +402,11 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
 
-	mINBYTE,_ := userlib.RSADecrypt(userdata.Key, []byte(msgid),[]byte("") )
+	mINBYTE, _ := userlib.RSADecrypt(userdata.Key, []byte(msgid), []byte("share"))
 	sig := mINBYTE[36:]
-	pubkey,_ := userlib.KeystoreGet(sender)
-	userlib.RSAVerify(&pubkey,mINBYTE[:36],sig)
-	m,_:= uuid.ParseBytes(mINBYTE[:36])
+	pubkey, _ := userlib.KeystoreGet(sender)
+	userlib.RSAVerify(&pubkey, mINBYTE[:36], sig)
+	m, _ := uuid.ParseBytes(mINBYTE[:36])
 	userdata.FileKey[filename] = m
 
 	return nil

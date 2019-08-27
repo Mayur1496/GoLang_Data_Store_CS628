@@ -80,5 +80,27 @@ func TestUserStorage(t *testing.T) {
 }
 
 func TestFileShareReceive(t *testing.T) {
+	u1, _ := InitUser("amiya", "abcd")
+	data1 := make([]byte, 4096)
+	e := u1.StoreFile("file1", data1)
+	if e != nil {
+		panic(e)
+	}
+
+	u2, _ := InitUser("suraj", "efgh")
+	temp := u2.Key.PublicKey
+	t.Log(temp)
+	temp2 := userlib.KeystoreGetMap()
+	t.Log(temp2)
+	msg, _ := u1.ShareFile("file1", "suraj")
+	e = u2.ReceiveFile("file2", "amiya", msg)
+	if e != nil {
+		panic(e)
+	}
+	recievedData, e := u2.LoadFile("file2", 0)
+	if e != nil {
+		panic(e)
+	}
+	t.Log(recievedData)
 	// add test cases here
 }
