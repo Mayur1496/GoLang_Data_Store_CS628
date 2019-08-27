@@ -102,5 +102,13 @@ func TestFileShareReceive(t *testing.T) {
 		panic(e)
 	}
 	t.Log(recievedData)
+
+	u1.RevokeFile("file1")
+	recievedData2, e := u2.LoadFile("file2", 0)
+	if e != nil {
+		panic(e)
+	}
+	t.Log(recievedData2)
+
 	// add test cases here
 }

@@ -106,10 +106,11 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	userdata.FileKey[filename] = fileUUID
 
 	var record sharingRecord
-	record.FileID = fileUUID
+	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
+	record.FileID = sharingkey[:8]
 	record.UserNames = append(record.UserNames, userdata.Username)
 	sharingdata, err := json.Marshal(record)
-	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
+
 	userlib.DatastoreSet(sharingkey[:8], sharingdata) //Store record using key as first 8 Bytes of fileUUID
 
 	if (len(data) % configBlockSize) != 0 {
@@ -385,12 +386,13 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 	userlib.DatastoreSet(string(hashkeyNEW), encodedIndirectInode)
 	data := make([]byte, configBlockSize)
 	userlib.DatastoreSet(string(hashkey), data)
+
 	m := userdata.FileKey[filename]
 	mSIGN, _ := userlib.RSASign(userdata.Key, []byte(m.String()))
 
 	pubkey, _ := userlib.KeystoreGet(recipient)
 	mINBYTE := []byte(m.String())
-	byteMsg, _ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte("share"))
+	byteMsg, _ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte(""))
 	byteMsg = append(byteMsg, mSIGN...)
 	msgid = string(byteMsg)
 	return
@@ -403,11 +405,11 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
 	byteMsg := []byte(msgid)
-	sig := byteMsg[36:]
-	mINBYTE, _ := userlib.RSADecrypt(userdata.Key, byteMsg[:36], []byte("share"))
+	sign := byteMsg[256:]
+	mINBYTE, _ := userlib.RSADecrypt(userdata.Key, byteMsg[:256], []byte(""))
 	pubkey, _ := userlib.KeystoreGet(sender)
-	userlib.RSAVerify(&pubkey, byteMsg[:36], sig)
-	m, _ := uuid.ParseBytes(mINBYTE[:36])
+	userlib.RSAVerify(&pubkey, mINBYTE, sign)
+	m, _ := uuid.ParseBytes(mINBYTE)
 	userdata.FileKey[filename] = m
 
 	return nil
@@ -415,6 +417,33 @@ func (userdata *User) ReceiveFile(filename string, sender string, msgid string) 
 
 // RevokeFile : function used revoke the shared file access
 func (userdata *User) RevokeFile(filename string) (err error) {
+	//oldData, _ := userdata.LoadFile(filename, 0)
+
+	//Get sharingRecord
+	oldFileID := userdata.FileKey[filename]
+	oldSharingkey := strings.Replace(oldFileID.String(), "-", "", -1)
+	sharingdata, _ := userlib.DatastoreGet(oldSharingkey[:8])
+	var record sharingRecord
+	if err := json.Unmarshal(sharingdata, &record); err != nil {
+		panic(err)
+	}
+
+	//Reset location at oldSharingKey[:8]
+	userlib.DatastoreSet(oldSharingkey[:8], []byte(""))
+
+	newFileID := uuid.New()
+	userdata.FileKey[filename] = newFileID
+	newSharingKey := strings.Replace(newFileID.String(), "-", "", -1)
+	//Remove all other users from sharing record
+	record.FileID = newSharingKey[:8]
+	record.UserNames = nil
+	record.UserNames = append(record.UserNames, userdata.Username)
+	sharingdata, _ = json.Marshal(record)
+	userlib.DatastoreSet(newSharingKey[:8], sharingdata)
+
+	//Store oldData again
+	//userdata.StoreFile(filename, oldData)
+
 	return
 }
 
@@ -431,7 +460,7 @@ func (userdata *User) RevokeFile(filename string) (err error) {
 // You may want to define what you actually want to pass as a
 // sharingRecord to serialized/deserialize in the data store.
 type sharingRecord struct {
-	FileID    uuid.UUID
+	FileID    string
 	UserNames []string
 }
 
