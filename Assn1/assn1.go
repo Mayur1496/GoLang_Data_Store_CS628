@@ -389,8 +389,9 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 	mSIGN, _ := userlib.RSASign(userdata.Key, []byte(m.String()))
 
 	pubkey, _ := userlib.KeystoreGet(recipient)
-	mINBYTE := append([]byte(m.String()), mSIGN...)
+	mINBYTE := []byte(m.String())
 	byteMsg, _ := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte("share"))
+	byteMsg = append(byteMsg, mSIGN...)
 	msgid = string(byteMsg)
 	return
 }
@@ -401,11 +402,11 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // it is authentically from the sender.
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
-
-	mINBYTE, _ := userlib.RSADecrypt(userdata.Key, []byte(msgid), []byte("share"))
-	sig := mINBYTE[36:]
+	byteMsg := []byte(msgid)
+	sig := byteMsg[36:]
+	mINBYTE, _ := userlib.RSADecrypt(userdata.Key, byteMsg[:36], []byte("share"))
 	pubkey, _ := userlib.KeystoreGet(sender)
-	userlib.RSAVerify(&pubkey, mINBYTE[:36], sig)
+	userlib.RSAVerify(&pubkey, byteMsg[:36], sig)
 	m, _ := uuid.ParseBytes(mINBYTE[:36])
 	userdata.FileKey[filename] = m
 
