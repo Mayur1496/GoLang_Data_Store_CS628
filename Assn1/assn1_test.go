@@ -46,7 +46,7 @@ func TestFileStoreLoadAppend(t *testing.T) {
 	u1, _ := InitUser("amiya", "abcd")
 	v := userlib.DatastoreGetMap()
 	t.Log(v)
-	data1 := make([]byte, 4096*200)
+	data1 := make([]byte, 4096*20)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
