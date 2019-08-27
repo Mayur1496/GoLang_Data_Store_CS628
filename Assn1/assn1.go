@@ -190,11 +190,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 // the block size; if it is not, AppendFile must return an error.
 // AppendFile : Function to append the file
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	oldData, err := userdata.LoadFile(filename, 0) //Getting whole file for HMAC verification
-	if err != nil {
-		z := errors.New("Load file failed")
-		return z
-	}
+
 	//Get old encrypted data
 	fileUUID := userdata.FileKey[filename]
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
@@ -218,87 +214,102 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
 	inodeID := inodeIndirect[len(inodeIndirect)-1]
 	inode := []uuid.UUID{}
-	encodedInode, _ := userlib.DatastoreGet(inodeID.String())
+	encodedInode, ok := userlib.DatastoreGet(inodeID.String())
+	if !ok {
+		err := errors.New("unable to get data from datastore")
+		return err
+	}
 	if err := json.Unmarshal(encodedInode, &inode); err != nil {
 		return err
 	}
-	oldIvID := inode[0]
-	oldIV, _ := userlib.DatastoreGet(oldIvID.String())
-	aesCypherStream := userlib.CFBEncrypter([]byte(sharingkey), oldIV) //FileUUID is used as Encryption key
-	oldEncryptedData := make([]byte, len(oldData))
-	aesCypherStream.XORKeyStream(oldEncryptedData, oldData)
 
-	iv := oldEncryptedData[len(oldEncryptedData)-userlib.BlockSize:] //Using last aesBlock as iv to new file
-
-	aesCypherStreamNew := userlib.CFBEncrypter([]byte(sharingkey), iv) //FileUUID is used as Encryption key
-	newEncryptedData := make([]byte, len(data))
-	aesCypherStreamNew.XORKeyStream(newEncryptedData, data)
-
-	wholeData := append(oldEncryptedData, newEncryptedData...)
-	newHmac := userlib.NewHMAC([]byte(sharingkey))
-	newHmac.Write(wholeData)
-	newHmacBlock := newHmac.Sum(nil)
-
-	//Append first new block at last block's position i.e. oldHMAC
-	remainingLength := len(newEncryptedData)
 	start := 0
 	end := configBlockSize
-	id := inode[len(inode)-1]
-	userlib.DatastoreSet(id.String(), newEncryptedData[start:end])
-	start += configBlockSize
-	end += configBlockSize
-	remainingLength -= configBlockSize
-
+	remainingLength := len(data)
 	for len(inode)*16 < configBlockSize {
 		if remainingLength == 0 {
-			macUUID := uuid.New()
-			inode = append(inode, macUUID)
-			userlib.DatastoreSet(macUUID.String(), newHmacBlock)
+			//save inode
 			encodedInode, _ := json.Marshal(inode)
 			userlib.DatastoreSet(inodeID.String(), encodedInode)
+
+			//save indirect inode
+			encodedIndirectInode, _ := json.Marshal(inodeIndirect)
+			userlib.DatastoreSet(string(hashkey), encodedIndirectInode)
 			break
 		}
 		id := uuid.New()
 		inode = append(inode, id)
-		userlib.DatastoreSet(id.String(), newEncryptedData[start:end])
+		block := data[start:end]
 		start += configBlockSize
 		end += configBlockSize
 		remainingLength -= configBlockSize
+
+		//calculate iv
+		blockIV := userlib.RandomBytes(userlib.BlockSize)
+
+		//encrypt data using iv
+		aesCypherStream := userlib.CFBEncrypter([]byte(sharingkey), blockIV)
+		encryptedBlock := make([]byte, len(block))
+		aesCypherStream.XORKeyStream(encryptedBlock, block)
+
+		//storageblock = iv+encrypted data
+		storageBlock := append(blockIV, encryptedBlock...)
+
+		//Calculate HMAC
+		mac := userlib.NewHMAC([]byte(sharingkey))
+		mac.Write(storageBlock)
+		blockHmac := mac.Sum(nil)
+		storageBlock = append(storageBlock, blockHmac...)
+
+		//Store iv+data+hmac as a block on datastore
+		userlib.DatastoreSet(id.String(), storageBlock)
 	}
-
 	for remainingLength > 0 {
+		//create inode and add its id to inodeindirect
 		inode := []uuid.UUID{}
-		inodeUUID := uuid.New()
-		inodeIndirect = append(inodeIndirect, inodeUUID)
+		inodeID := uuid.New()
+		inodeIndirect = append(inodeIndirect, inodeID)
 
-		for len(inode)*16 < configBlockSize {
-			if remainingLength == 0 {
-				break
-			}
-			id := uuid.New()
-			inode = append(inode, id)
-			userlib.DatastoreSet(id.String(), newEncryptedData[start:end])
-			start += configBlockSize
-			end += configBlockSize
-			remainingLength -= configBlockSize
-		}
+		//save block to inode
+		id := uuid.New()
+		inode = append(inode, id)
+		block := data[start:end]
+		start += configBlockSize
+		end += configBlockSize
+		remainingLength -= configBlockSize
 
+		//calculate iv
+		blockIV := userlib.RandomBytes(userlib.BlockSize)
+
+		//encrypt data using iv
+		aesCypherStream := userlib.CFBEncrypter([]byte(sharingkey), blockIV)
+		encryptedBlock := make([]byte, len(block))
+		aesCypherStream.XORKeyStream(encryptedBlock, block)
+
+		//storageblock = iv+encrypted data
+		storageBlock := append(blockIV, encryptedBlock...)
+
+		//Calculate HMAC
+		mac := userlib.NewHMAC([]byte(sharingkey))
+		mac.Write(storageBlock)
+		blockHmac := mac.Sum(nil)
+		storageBlock = append(storageBlock, blockHmac...)
+
+		//Store iv+data+hmac as a block on datastore
+		userlib.DatastoreSet(id.String(), storageBlock)
+
+		//check if data is over
 		if remainingLength == 0 {
-			macUUID := uuid.New()
-			inode = append(inode, macUUID)
-			userlib.DatastoreSet(macUUID.String(), newHmacBlock)
+			//save inode
 			encodedInode, _ := json.Marshal(inode)
-			userlib.DatastoreSet(inodeUUID.String(), encodedInode)
+			userlib.DatastoreSet(inodeID.String(), encodedInode)
+
+			//save indirect inode
+			encodedIndirectInode, _ := json.Marshal(inodeIndirect)
+			userlib.DatastoreSet(string(hashkey), encodedIndirectInode)
 			break
 		}
-
-		encodedInode, _ := json.Marshal(inode)
-		userlib.DatastoreSet(inodeUUID.String(), encodedInode)
 	}
-
-	encodedIndirectnode, _ := json.Marshal(inodeIndirect)
-	userlib.DatastoreSet(string(hashkey), encodedIndirectnode)
-
 	return
 }
 

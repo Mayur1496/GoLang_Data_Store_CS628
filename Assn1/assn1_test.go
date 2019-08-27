@@ -44,8 +44,9 @@ func TestGetUser(t *testing.T) {
 func TestFileStoreLoadAppend(t *testing.T) {
 	t.Log("----")
 	u1, _ := InitUser("amiya", "abcd")
-
-	data1 := make([]byte, 4096*20)
+	v := userlib.DatastoreGetMap()
+	t.Log(v)
+	data1 := make([]byte, 4096*200)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
@@ -87,12 +88,10 @@ func TestFileShareReceive(t *testing.T) {
 		panic(e)
 	}
 
-	u2, _ := InitUser("suraj", "efgh")
-	temp := u2.Key.PublicKey
-	t.Log(temp)
-	temp2 := userlib.KeystoreGetMap()
-	t.Log(temp2)
-	msg, _ := u1.ShareFile("file1", "suraj")
+	u2, e := InitUser("suraj", "efgh")
+	u3, e := InitUser("sura", "pass")
+	t.Log(u3)
+	msg, e := u1.ShareFile("file1", "sura")
 	e = u2.ReceiveFile("file2", "amiya", msg)
 	if e != nil {
 		panic(e)
