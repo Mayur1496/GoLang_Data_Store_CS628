@@ -45,7 +45,7 @@ func TestFileStoreLoadAppend(t *testing.T) {
 	t.Log("----")
 	u1, _ := InitUser("amiya", "abcd")
 
-	data1 := make([]byte, 4096)
+	data1 := make([]byte, 4096*20)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
@@ -103,7 +103,7 @@ func TestFileShareReceive(t *testing.T) {
 	}
 	t.Log(recievedData)
 
-	u1.RevokeFile("file1")
+	//u1.RevokeFile("file1")
 	recievedData2, e := u2.LoadFile("file2", 0)
 	if e != nil {
 		panic(e)
