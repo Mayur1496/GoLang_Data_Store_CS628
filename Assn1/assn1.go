@@ -322,6 +322,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // LoadFile is also expected to be efficient. Reading a random block from the
 // file should not fetch more than O(1) blocks from the Datastore.
 func (userdata *User) LoadFile(filename string, offset int) (data []byte, err error) {
+	//retrieve filepointer and sharing data
 	fileUUID := userdata.FileKey[filename]
 	var record sharingRecord
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
@@ -333,9 +334,12 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 	if err := json.Unmarshal(sharingdata, &record); err != nil {
 		return nil, err
 	}
+
+	//calculate hashkey from sharingdata  
 	hmac := userlib.NewHMAC(sharingdata)
 	hashkey := hmac.Sum(nil)
-
+	
+	//retrieve indirectInode Block from hashkey
 	inodeIndirect := []uuid.UUID{}
 	encodedIndirectInode, ok := userlib.DatastoreGet(string(hashkey))
 	if !ok {
@@ -345,71 +349,52 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 	if err := json.Unmarshal(encodedIndirectInode, &inodeIndirect); err != nil {
 		return nil, err
 	}
-
-	encryptedData := []byte{} //For retrieval of encrypted data
-	iv := []byte{}
-	hmacBlock := []byte{}
-	firstInode := true
-
-	indirectInodeOffset := 0 //(offset + 1) / (configBlockSize / 16)
-	inodeOffset := 1         //(offset + 1) % (configBlockSize / 16)
-
-	for i := indirectInodeOffset; i < len(inodeIndirect); i++ {
-		id := inodeIndirect[i].String()
-		inode := []uuid.UUID{}
-		encodedInode, ok := userlib.DatastoreGet(id)
-		if !ok {
-			z := errors.New("unable to get data from datastore")
-			return nil, z
-		}
-		if err := json.Unmarshal(encodedInode, &inode); err != nil {
-			return nil, err
-		}
-		j := 0
-		if i == indirectInodeOffset {
-			j = inodeOffset
-		}
-		for ; j < len(inode); j++ {
-			if firstInode { //Get iv from first id
-				iv, ok = userlib.DatastoreGet(inode[0].String())
-				if !ok {
-					z := errors.New("unable to get data from datastore")
-					return nil, z
-				}
-				firstInode = false
-			}
-
-			dataBlockID := inode[j].String()
-
-			if i == len(inodeIndirect)-1 && j == len(inode)-1 { //get HMAC from last id
-				hmacBlock, ok = userlib.DatastoreGet(dataBlockID)
-				if !ok {
-					z := errors.New("unable to get data from datastore")
-					return nil, z
-				}
-				break
-			}
-			dataBlock, ok := userlib.DatastoreGet(dataBlockID)
-			if !ok {
-				z := errors.New("unable to get data from datastore")
-				return nil, z
-			}
-			encryptedData = append(encryptedData, dataBlock...)
-		}
+	
+	//calculate inode block where Datablock ID is present 
+	blockPerInode := configBlockSize / 16
+	inodeIndirectOffset := offset / blockPerInode
+	inodeOffset := offset % blockPerInode
+	inodeID := inodeIndirect[inodeIndirectOffset]
+	encodedInode, ok := userlib.DatastoreGet(inodeID.String())
+    if !ok {
+		z := errors.New("unable to get data from datastore")
+		return nil, z
 	}
+	inode := []uuid.UUID{}
+	if err := json.Unmarshal(encodedInode, &inode); err != nil {
+		return []byte(" "), err
+	}
+	dataBlockID := inode[inodeOffset]
+
+	//Retrieve Datablock
+	totalData, ok := userlib.DatastoreGet(dataBlockID.String())
+	if !ok {
+		z := errors.New("unable to get data from datastore")
+		return nil, z
+	}
+
+    //Extract hmac from datablock
+	hmacData := totalData[(configBlockSize+16): ]
+	encryptedData := totalData[ : (configBlockSize+16)]  //encrypted data + iv
+
+	//Calculate hash of encrypted data + iv
 	mac := userlib.NewHMAC([]byte(sharingkey))
 	mac.Write(encryptedData)
 	h := mac.Sum(nil)
-	if hex.EncodeToString(h) != hex.EncodeToString(hmacBlock) {
+	//Compare hash
+	if hex.EncodeToString(h) != hex.EncodeToString(hmacData) {
 		err := errors.New("HMAC verification failed : Data Corrupted")
 		return nil, err
 	}
-
+	iv := encryptedData[ : 16]
+	encryptedData = encryptedData[16 : ]       // only encrypted data of size=configBlockSize
 	decryptedData := make([]byte, len(encryptedData))
 	aesCypherStream := userlib.CFBDecrypter([]byte(sharingkey), iv)
 	aesCypherStream.XORKeyStream(decryptedData, encryptedData)
-
-	return decryptedData[offset*configBlockSize:], nil
+	
+	return decryptedData, nil
+	
+	
 }
 
 // ShareFile : Function used to the share file with other user
