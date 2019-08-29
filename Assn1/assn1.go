@@ -99,6 +99,13 @@ type User struct {
 // of data []byte is a multiple of the blocksize; if
 // this is not the case, StoreFile should return an error.
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
+	//check userdata
+	_, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+
+		return err
+	}
+
 	//create file id and store it to userdata
 	fileUUID := uuid.New()
 	userdata.FileKey[filename] = fileUUID
@@ -155,6 +162,12 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 // the block size; if it is not, AppendFile must return an error.
 // AppendFile : Function to append the file
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
+	//check userdata
+	_, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+
+		return err
+	}
 
 	//Get old encrypted data
 	fileUUID := userdata.FileKey[filename]
@@ -287,18 +300,24 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // LoadFile is also expected to be efficient. Reading a random block from the
 // file should not fetch more than O(1) blocks from the Datastore.
 func (userdata *User) LoadFile(filename string, offset int) (data []byte, err error) {
+	//check userdata
+	_, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return nil, err
+	}
+
 	//retrieve filepointer and sharing data
 	fileUUID := userdata.FileKey[filename]
-	var record sharingRecord
+	//var record sharingRecord
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
 	sharingdata, ok := userlib.DatastoreGet(sharingkey[:8])
 	if !ok {
 		z := errors.New("unable to get data from datastore")
 		return nil, z
 	}
-	if err := json.Unmarshal(sharingdata, &record); err != nil {
-		return nil, err
-	}
+	// if err := json.Unmarshal(sharingdata, &record); err != nil {
+	// 	return nil, err
+	// }
 
 	//calculate hashkey from sharingdata
 	hmac := userlib.NewHMAC(sharingdata)
@@ -363,6 +382,12 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 
 // ShareFile : Function used to the share file with other user
 func (userdata *User) ShareFile(filename string, recipient string) (msgid string, err error) {
+	//check userdata
+	_, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return "", err
+	}
+
 	fileUUID := userdata.FileKey[filename]
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
 	sharingdata, ok := userlib.DatastoreGet(sharingkey[:8])
@@ -421,6 +446,12 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 // it is authentically from the sender.
 // ReceiveFile : function used to receive the file details from the sender
 func (userdata *User) ReceiveFile(filename string, sender string, msgid string) error {
+	//check userdata
+	_, err := GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return err
+	}
+
 	byteMsg := []byte(msgid)
 	sign := byteMsg[256:]
 	mINBYTE, err := userlib.RSADecrypt(userdata.Key, byteMsg[:256], []byte(""))
@@ -447,6 +478,12 @@ func (userdata *User) ReceiveFile(filename string, sender string, msgid string) 
 
 // RevokeFile : function used revoke the shared file access
 func (userdata *User) RevokeFile(filename string) (err error) {
+	//check userdata
+	_, err = GetUser(userdata.Username, userdata.Password)
+	if err != nil {
+		return err
+	}
+
 	//Get sharingRecord
 	oldFileID := userdata.FileKey[filename]
 	oldSharingkey := strings.Replace(oldFileID.String(), "-", "", -1)
@@ -511,6 +548,13 @@ type sharingRecord struct {
 
 //InitUser : function used to create user
 func InitUser(username string, password string) (userdataptr *User, err error) {
+	//check single user multiple instances
+	u, _ := GetUser(username, password)
+	if u != nil {
+		z := errors.New("User already present")
+		return nil, z
+	}
+
 	var user User
 	//Storing values in User
 	user.Username = username
@@ -594,7 +638,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 	inode := []uuid.UUID{}
 	if err := json.Unmarshal(encodedInode, &inode); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	data := []byte{} //For retrieval of encrypted data
@@ -603,8 +647,16 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	for i, v := range inode {
 		if i == 0 { //Retrieve iv
 			iv, ok = userlib.DatastoreGet(v.String())
+			if !ok {
+				z := errors.New("unable to get data from datastore")
+				return nil, z
+			}
 		} else if i == len(inode)-1 { //Retrieve hmac
 			hmacBlock, ok = userlib.DatastoreGet(v.String())
+			if !ok {
+				z := errors.New("unable to get data from datastore")
+				return nil, z
+			}
 		} else {
 			block, ok := userlib.DatastoreGet(v.String())
 			data = append(data, block...)
@@ -612,10 +664,6 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 				z := errors.New("unable to get data from datastore")
 				return nil, z
 			}
-		}
-		if !ok {
-			z := errors.New("unable to get data from datastore")
-			return nil, z
 		}
 	}
 

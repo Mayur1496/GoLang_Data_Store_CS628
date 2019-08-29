@@ -16,6 +16,10 @@ func TestInitUser(t *testing.T) {
 	userlib.DebugPrint = true
 	userlib.DebugPrint = false
 	_, err1 := InitUser("amiya", "abcd")
+	_, e := InitUser("amiya", "abcd")
+	if e != nil {
+		t.Error(e)
+	}
 	//t.Log(userlib.DatastoreGetMap())
 	if err1 != nil {
 		t.Log("Failed to initialize user")
@@ -82,16 +86,18 @@ func TestUserStorage(t *testing.T) {
 
 func TestFileShareReceive(t *testing.T) {
 	u1, _ := InitUser("amiya", "abcd")
-	data1 := make([]byte, 4096)
+	v := userlib.DatastoreGetMap()
+	t.Log(v)
+	data1 := make([]byte, 4096*300)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
 	}
 
 	u2, e := InitUser("suraj", "efgh")
-	u3, e := InitUser("sura", "pass")
-	t.Log(u3)
-	msg, e := u1.ShareFile("file1", "sura")
+	//u3, e := InitUser("sura", "pass")
+	//t.Log(u3)
+	msg, e := u1.ShareFile("file1", "suraj")
 	e = u2.ReceiveFile("file2", "amiya", msg)
 	if e != nil {
 		panic(e)
@@ -102,7 +108,7 @@ func TestFileShareReceive(t *testing.T) {
 	}
 	t.Log(recievedData)
 
-	//u1.RevokeFile("file1")
+	u1.RevokeFile("file1")
 	recievedData2, e := u2.LoadFile("file2", 0)
 	if e != nil {
 		panic(e)
