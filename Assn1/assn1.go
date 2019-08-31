@@ -91,7 +91,6 @@ type User struct {
 	Password string
 	Key      *userlib.PrivateKey
 	FileKey  map[string]uuid.UUID
-	//SharingRecords []sharingRecord
 }
 
 // StoreFile : function used to create a  file
@@ -112,28 +111,12 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	//create and popullate instance of sharing record
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
-	var record sharingRecord
-	record.FileID = sharingkey[:8]
-	record.UserNames = append(record.UserNames, userdata.Username)
-	sharingdata, err := json.Marshal(record)
-	if err != nil {
-		z := errors.New("JSON Marshal failed")
-		return z
-	}
-
-	//Store record using key as first 8 Bytes of fileUUID
-	userlib.DatastoreSet(sharingkey[:8], sharingdata)
 
 	//check data length
 	if (len(data) % configBlockSize) != 0 {
 		err := errors.New("Invalid Data Size")
 		return err
 	}
-
-	//create hash from sharing data
-	hmac := userlib.NewHMAC(sharingdata)
-	//Hash key is used to store indirectInode
-	hashkey := hmac.Sum(nil)
 
 	//create inodeindirect and add one inode
 	//and save it to location pointed by
@@ -149,7 +132,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	//save encoded inodeindirect
 	encodedInodeIndirect, _ := json.Marshal(inodeIndirect)
-	userlib.DatastoreSet(string(hashkey), encodedInodeIndirect)
+	userlib.DatastoreSet(string(sharingkey[:8]), encodedInodeIndirect)
 
 	//save data to empty file
 	err = userdata.AppendFile(filename, data)
@@ -172,16 +155,9 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	//Get old encrypted data
 	fileUUID := userdata.FileKey[filename]
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
-	sharingdata, ok := userlib.DatastoreGet(sharingkey[:8])
-	if !ok {
-		z := errors.New("unable to get data from datastore")
-		return z
-	}
 
-	hmac := userlib.NewHMAC(sharingdata)
-	hashkey := hmac.Sum(nil)
 	inodeIndirect := []uuid.UUID{}
-	encodedIndirectInode, ok := userlib.DatastoreGet(string(hashkey))
+	encodedIndirectInode, ok := userlib.DatastoreGet(string(sharingkey[:8]))
 	if !ok {
 		z := errors.New("unable to get data from datastore")
 		return z
@@ -204,7 +180,12 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	start := 0
 	end := configBlockSize
 	remainingLength := len(data)
-	for len(inode)*16 < configBlockSize {
+	for len(inode)*16 <= configBlockSize {
+		if len(inode)*16 == configBlockSize {
+			encodedInode, _ := json.Marshal(inode)
+			userlib.DatastoreSet(inodeID.String(), encodedInode)
+			break
+		}
 		if remainingLength == 0 {
 			//save inode
 			encodedInode, _ := json.Marshal(inode)
@@ -212,7 +193,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
 			//save indirect inode
 			encodedIndirectInode, _ := json.Marshal(inodeIndirect)
-			userlib.DatastoreSet(string(hashkey), encodedIndirectInode)
+			userlib.DatastoreSet(string(sharingkey[:8]), encodedIndirectInode)
 			break
 		}
 		id := uuid.New()
@@ -248,44 +229,48 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 		inodeID := uuid.New()
 		inodeIndirect = append(inodeIndirect, inodeID)
 
-		//save block to inode
-		id := uuid.New()
-		inode = append(inode, id)
-		block := data[start:end]
-		start += configBlockSize
-		end += configBlockSize
-		remainingLength -= configBlockSize
+		for len(inode)*16 <= configBlockSize {
+			if len(inode)*16 == configBlockSize {
+				encodedInode, _ := json.Marshal(inode)
+				userlib.DatastoreSet(inodeID.String(), encodedInode)
+				break
+			}
+			if remainingLength == 0 {
+				//save inode
+				encodedInode, _ := json.Marshal(inode)
+				userlib.DatastoreSet(inodeID.String(), encodedInode)
 
-		//calculate iv
-		blockIV := userlib.RandomBytes(userlib.BlockSize)
+				//save indirect inode
+				encodedIndirectInode, _ := json.Marshal(inodeIndirect)
+				userlib.DatastoreSet(string(sharingkey[:8]), encodedIndirectInode)
+				break
+			}
+			id := uuid.New()
+			inode = append(inode, id)
+			block := data[start:end]
+			start += configBlockSize
+			end += configBlockSize
+			remainingLength -= configBlockSize
 
-		//encrypt data using iv
-		aesCypherStream := userlib.CFBEncrypter([]byte(sharingkey), blockIV)
-		encryptedBlock := make([]byte, len(block))
-		aesCypherStream.XORKeyStream(encryptedBlock, block)
+			//calculate iv
+			blockIV := userlib.RandomBytes(userlib.BlockSize)
 
-		//storageblock = iv+encrypted data
-		storageBlock := append(blockIV, encryptedBlock...)
+			//encrypt data using iv
+			aesCypherStream := userlib.CFBEncrypter([]byte(sharingkey), blockIV)
+			encryptedBlock := make([]byte, len(block))
+			aesCypherStream.XORKeyStream(encryptedBlock, block)
 
-		//Calculate HMAC
-		mac := userlib.NewHMAC([]byte(sharingkey))
-		mac.Write(storageBlock)
-		blockHmac := mac.Sum(nil)
-		storageBlock = append(storageBlock, blockHmac...)
+			//storageblock = iv+encrypted data
+			storageBlock := append(blockIV, encryptedBlock...)
 
-		//Store iv+data+hmac as a block on datastore
-		userlib.DatastoreSet(id.String(), storageBlock)
+			//Calculate HMAC
+			mac := userlib.NewHMAC([]byte(sharingkey))
+			mac.Write(storageBlock)
+			blockHmac := mac.Sum(nil)
+			storageBlock = append(storageBlock, blockHmac...)
 
-		//check if data is over
-		if remainingLength == 0 {
-			//save inode
-			encodedInode, _ := json.Marshal(inode)
-			userlib.DatastoreSet(inodeID.String(), encodedInode)
-
-			//save indirect inode
-			encodedIndirectInode, _ := json.Marshal(inodeIndirect)
-			userlib.DatastoreSet(string(hashkey), encodedIndirectInode)
-			break
+			//Store iv+data+hmac as a block on datastore
+			userlib.DatastoreSet(id.String(), storageBlock)
 		}
 	}
 	return
@@ -308,24 +293,11 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 
 	//retrieve filepointer and sharing data
 	fileUUID := userdata.FileKey[filename]
-	//var record sharingRecord
 	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
-	sharingdata, ok := userlib.DatastoreGet(sharingkey[:8])
-	if !ok {
-		z := errors.New("unable to get data from datastore")
-		return nil, z
-	}
-	// if err := json.Unmarshal(sharingdata, &record); err != nil {
-	// 	return nil, err
-	// }
 
-	//calculate hashkey from sharingdata
-	hmac := userlib.NewHMAC(sharingdata)
-	hashkey := hmac.Sum(nil)
-
-	//retrieve indirectInode Block from hashkey
+	//retrieve indirectInode Block from sharingkey
 	inodeIndirect := []uuid.UUID{}
-	encodedIndirectInode, ok := userlib.DatastoreGet(string(hashkey))
+	encodedIndirectInode, ok := userlib.DatastoreGet(string(sharingkey[:8]))
 	if !ok {
 		z := errors.New("unable to get data from datastore")
 		return nil, z
@@ -371,10 +343,10 @@ func (userdata *User) LoadFile(filename string, offset int) (data []byte, err er
 		return nil, err
 	}
 	iv := encryptedData[:16]
-	encryptedData = encryptedData[16:] // only encrypted data of size=configBlockSize
-	decryptedData := make([]byte, len(encryptedData))
+	//encryptedData =  // only encrypted data of size=configBlockSize
+	decryptedData := make([]byte, len(encryptedData[16:]))
 	aesCypherStream := userlib.CFBDecrypter([]byte(sharingkey), iv)
-	aesCypherStream.XORKeyStream(decryptedData, encryptedData)
+	aesCypherStream.XORKeyStream(decryptedData, encryptedData[16:])
 
 	return decryptedData, nil
 
@@ -389,38 +361,8 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 	}
 
 	fileUUID := userdata.FileKey[filename]
-	sharingkey := strings.Replace(fileUUID.String(), "-", "", -1)
-	sharingdata, ok := userlib.DatastoreGet(sharingkey[:8])
-	if !ok {
-		z := errors.New("unable to get data from datastore")
-		return "", z
-	}
 
-	hmac := userlib.NewHMAC(sharingdata)
-	hashkey := hmac.Sum(nil)
-	var record sharingRecord
-	if err := json.Unmarshal(sharingdata, &record); err != nil {
-		return "", err
-	}
-	record.UserNames = append(record.UserNames, recipient)
-	sharingdataNEW, err := json.Marshal(record)
-
-	//Saving sharingDataNew
-	userlib.DatastoreSet(sharingkey[:8], sharingdataNEW)
-
-	hmacNEW := userlib.NewHMAC(sharingdataNEW)
-	hashkeyNEW := hmacNEW.Sum(nil)
-	encodedIndirectInode, ok := userlib.DatastoreGet(string(hashkey))
-	if !ok {
-		z := errors.New("unable to get data from datastore")
-		return "", z
-	}
-	userlib.DatastoreSet(string(hashkeyNEW), encodedIndirectInode)
-	data := make([]byte, configBlockSize)
-	userlib.DatastoreSet(string(hashkey), data)
-
-	m := userdata.FileKey[filename]
-	mSIGN, err := userlib.RSASign(userdata.Key, []byte(m.String()))
+	mSIGN, err := userlib.RSASign(userdata.Key, []byte(fileUUID.String()))
 	if err != nil {
 		return "", err
 	}
@@ -430,7 +372,7 @@ func (userdata *User) ShareFile(filename string, recipient string) (msgid string
 		z := errors.New("unable to get data from keystore")
 		return "", z
 	}
-	mINBYTE := []byte(m.String())
+	mINBYTE := []byte(fileUUID.String())
 	byteMsg, err := userlib.RSAEncrypt(&pubkey, mINBYTE, []byte(""))
 	if err != nil {
 		return "", err
@@ -487,30 +429,39 @@ func (userdata *User) RevokeFile(filename string) (err error) {
 	//Get sharingRecord
 	oldFileID := userdata.FileKey[filename]
 	oldSharingkey := strings.Replace(oldFileID.String(), "-", "", -1)
-	sharingdata, ok := userlib.DatastoreGet(oldSharingkey[:8])
+	encodedIndirectInode, ok := userlib.DatastoreGet(oldSharingkey[:8])
 	if !ok {
 		z := errors.New("unable to get data from datastore")
 		return z
 	}
-	var record sharingRecord
-	if err := json.Unmarshal(sharingdata, &record); err != nil {
+	indirectInode := []uuid.UUID{}
+	if err := json.Unmarshal(encodedIndirectInode, &indirectInode); err != nil {
 		return err
 	}
 
-	//Reset location at oldSharingKey[:8]
+	data := []byte{} //get total decrypted data into this variable
+	offset := 0
+	for _, inodeID := range indirectInode {
+		inode := []uuid.UUID{}
+		encodedInode, ok := userlib.DatastoreGet(inodeID.String())
+		if !ok {
+			z := errors.New("data not found")
+			return z
+		}
+		if err := json.Unmarshal(encodedInode, &inode); err != nil {
+			return err
+		}
+		for range inode {
+			block, err := userdata.LoadFile(filename, offset)
+			if err != nil {
+				return err
+			}
+			data = append(data, block...)
+			offset++
+		}
+	}
 	userlib.DatastoreSet(oldSharingkey[:8], []byte(""))
-
-	newFileID := uuid.New()
-	userdata.FileKey[filename] = newFileID
-	newSharingKey := strings.Replace(newFileID.String(), "-", "", -1)
-
-	//Remove all other users from sharing record
-	record.FileID = newSharingKey[:8]
-	record.UserNames = nil
-	record.UserNames = append(record.UserNames, userdata.Username)
-	sharingdata, _ = json.Marshal(record)
-	userlib.DatastoreSet(newSharingKey[:8], sharingdata)
-
+	userdata.StoreFile(filename, data)
 	return nil
 }
 
@@ -570,54 +521,29 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
 	encryptionKey := userlib.Argon2Key([]byte(password), []byte(""), 32)
-	iv := make([]byte, userlib.BlockSize)
-	iv = userlib.RandomBytes(userlib.BlockSize)
-	ivUUID := uuid.New()
-	userlib.DatastoreSet(ivUUID.String(), iv) //Store iv into Datastore
-	inode := []uuid.UUID{ivUUID}              //Save ivUUID to inode
-	aesCypherStream := userlib.CFBEncrypter(encryptionKey, iv)
 
-	//Encrypting and storing user
-	data, err := json.Marshal(user)
-	encryptedData := make([]byte, len(data))
-	aesCypherStream.XORKeyStream(encryptedData, data) //Encrypt user
-	mac := userlib.NewHMAC(encryptionKey)             //Create HMAC
-	mac.Write(encryptedData)
+	//calculate iv
+	blockIV := userlib.RandomBytes(userlib.BlockSize)
 
-	if len(encryptedData) <= configBlockSize {
-		id := uuid.New()
-		inode = append(inode, id)
-		userlib.DatastoreSet(id.String(), encryptedData)
-	} else {
-		start := 0
-		end := configBlockSize
-		remainingLength := len(encryptedData)
-		for {
-			if remainingLength == 0 {
-				break
-			}
-			if remainingLength < configBlockSize {
-				id := uuid.New()
-				inode = append(inode, id)
-				userlib.DatastoreSet(id.String(), encryptedData[start:])
-				break
-			}
-			id := uuid.New()
-			inode = append(inode, id)
-			userlib.DatastoreSet(id.String(), encryptedData[start:end])
-			start += configBlockSize
-			end += configBlockSize
-			remainingLength -= configBlockSize
-		}
-	}
-	//Append HMAC
-	macUUID := uuid.New()
-	hmacBlock := mac.Sum(nil)
-	inode = append(inode, macUUID)
-	userlib.DatastoreSet(macUUID.String(), hmacBlock)
+	//marshal user
+	block, err := json.Marshal(user)
 
-	encodedInode, _ := json.Marshal(inode)
-	userlib.DatastoreSet(string(storageKey), encodedInode)
+	//encrypt data using iv
+	aesCypherStream := userlib.CFBEncrypter([]byte(encryptionKey), blockIV)
+	encryptedBlock := make([]byte, len(block))
+	aesCypherStream.XORKeyStream(encryptedBlock, block)
+
+	//storageblock = iv+encrypted data
+	storageBlock := append(blockIV, encryptedBlock...)
+
+	//Calculate HMAC
+	mac := userlib.NewHMAC([]byte(encryptionKey))
+	mac.Write(storageBlock)
+	blockHmac := mac.Sum(nil)
+	storageBlock = append(storageBlock, blockHmac...)
+
+	//Store iv+data+hmac as a block on datastore
+	userlib.DatastoreSet(string(storageKey), storageBlock)
 
 	return &user, nil
 }
@@ -630,58 +556,27 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var user User
 	storageKey := userlib.Argon2Key([]byte(password), []byte(username), 32)
 	decryptionKey := userlib.Argon2Key([]byte(password), []byte(""), 32)
-	encodedInode, ok := userlib.DatastoreGet(string(storageKey))
+	data, ok := userlib.DatastoreGet(string(storageKey))
 	if !ok {
 		err := errors.New("Invalid Username or Password")
 		return nil, err
 	}
 
-	inode := []uuid.UUID{}
-	if err := json.Unmarshal(encodedInode, &inode); err != nil {
-		return nil, err
-	}
-
-	data := []byte{} //For retrieval of encrypted data
-	iv := []byte{}
-	hmacBlock := []byte{}
-	for i, v := range inode {
-		if i == 0 { //Retrieve iv
-			iv, ok = userlib.DatastoreGet(v.String())
-			if !ok {
-				z := errors.New("unable to get data from datastore")
-				return nil, z
-			}
-		} else if i == len(inode)-1 { //Retrieve hmac
-			hmacBlock, ok = userlib.DatastoreGet(v.String())
-			if !ok {
-				z := errors.New("unable to get data from datastore")
-				return nil, z
-			}
-		} else {
-			block, ok := userlib.DatastoreGet(v.String())
-			data = append(data, block...)
-			if !ok {
-				z := errors.New("unable to get data from datastore")
-				return nil, z
-			}
-		}
-	}
-
 	mac := userlib.NewHMAC(decryptionKey)
-	mac.Write(data)
+	mac.Write(data[:len(data)-32])
 
-	if hex.EncodeToString(mac.Sum(nil)) != hex.EncodeToString(hmacBlock) {
+	if hex.EncodeToString(mac.Sum(nil)) != hex.EncodeToString(data[len(data)-32:]) {
 		err := errors.New("HMAC verification failed : Data Corrupted")
 		return nil, err
 	}
 
-	encodedUser := make([]byte, len(data))
+	iv := data[:userlib.BlockSize]
+	encodedUser := make([]byte, len(data)-userlib.BlockSize-32)
 	aesCypherStream := userlib.CFBDecrypter(decryptionKey, iv)
-	aesCypherStream.XORKeyStream(encodedUser, data)
+	aesCypherStream.XORKeyStream(encodedUser, data[userlib.BlockSize:len(data)-32])
 
 	if err := json.Unmarshal(encodedUser, &user); err != nil {
 		return nil, err
 	}
-
 	return &user, nil
 }

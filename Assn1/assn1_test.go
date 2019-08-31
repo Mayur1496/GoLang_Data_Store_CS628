@@ -16,7 +16,7 @@ func TestInitUser(t *testing.T) {
 	userlib.DebugPrint = true
 	userlib.DebugPrint = false
 	_, err1 := InitUser("amiya", "abcd")
-	_, e := InitUser("amiya", "abcd")
+	_, e := GetUser("amiya", "abcd")
 	if e != nil {
 		t.Error(e)
 	}
@@ -46,11 +46,10 @@ func TestGetUser(t *testing.T) {
 }
 
 func TestFileStoreLoadAppend(t *testing.T) {
-	t.Log("----")
 	u1, _ := InitUser("amiya", "abcd")
 	v := userlib.DatastoreGetMap()
 	t.Log(v)
-	data1 := make([]byte, 4096*20)
+	data1 := make([]byte, 4096*150)
 	e := u1.StoreFile("file1", data1)
 	if e != nil {
 		panic(e)
@@ -68,7 +67,7 @@ func TestFileStoreLoadAppend(t *testing.T) {
 		panic(e)
 	}
 
-	data3, _ := u1.LoadFile("file1", 0)
+	data3, _ := u1.LoadFile("file1", 270)
 	t.Log(len(data3))
 
 	// add test cases here
@@ -95,8 +94,6 @@ func TestFileShareReceive(t *testing.T) {
 	}
 
 	u2, e := InitUser("suraj", "efgh")
-	//u3, e := InitUser("sura", "pass")
-	//t.Log(u3)
 	msg, e := u1.ShareFile("file1", "suraj")
 	e = u2.ReceiveFile("file2", "amiya", msg)
 	if e != nil {
